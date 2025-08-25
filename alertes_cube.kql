@@ -1,0 +1,28 @@
+//Extraire 4 mois d'historique pour construire la table
+deviceTelemetry
+| where timestamp >= ago(3d)
+| where eventType == "fault"
+| project-away eventType
+| where metric !in ("SB_SWITCH_STATUS", "OTHER_ALARM", "OTHER_WARNING")
+| order by deviceId asc, levelId asc, metric asc, timestamp asc
+| where deviceId != prev(deviceId)
+    or levelId != prev(levelId)
+    or metric != prev(metric)
+    or value != prev(value)
+| order by deviceId asc, levelId asc, metric asc, timestamp asc
+| extend eventEnd = next(timestamp)
+| extend eventEnd = iff(
+    deviceId == next(deviceId) and levelId == next(levelId) and metric == next(metric),
+    eventEnd,
+    datetime(null)
+  )
+| where value == 1
+| project eventStart = timestamp, eventEnd, duration = eventEnd - timestamp, deviceId, levelId, metric
+| lookup kind=inner (GetAssets() // ya pas les assets string
+    | project contractName, deviceId = technicalId, levelId, assetType, assetId=assetLevel, siteLabel)
+    on deviceId, levelId
+| where contractName == "Ringo"
+| lookup kind=inner (contract | project-keep contractName, timezoneId) on contractName
+| extend eventStart = datetime_utc_to_local(eventStart, timezoneId), eventEnd = datetime_utc_to_local(eventEnd, timezoneId)
+| project-away timezoneId
+//| summarize count() by metric, deviceId

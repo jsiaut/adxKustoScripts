@@ -1,0 +1,19 @@
+//Depuis la dev
+cluster('adxdataessprod.westeurope.kusto.windows.net').database('isight-data').contract()
+
+
+//Supprimer des lignes dans une petite table
+.delete table evh_business_references records with (whatif=true) <|
+evh_business_references | where not(data has_cs "1754642697")
+
+.delete table evh_business_references records <|
+evh_business_references | where not(data has_cs "1754642697")
+
+
+//Récupérer le schéma d'un table
+normalize_evh_telemetry_riva_metrics
+| getschema
+| project ColumnName, ColumnType
+| extend CombinedColumn = strcat(ColumnName, ":", ColumnType)
+| project CombinedColumn
+| summarize CombinedColumn2 = strcat_array(make_list(CombinedColumn), ",")

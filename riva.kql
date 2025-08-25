@@ -1,0 +1,154 @@
+.create-or-alter function
+ with (docstring = 'Parses raw Riva Metric records into strongly-typed event columns', folder = 'normalize')
+     normalize_evh_telemetry_riva_metrics()  
+{
+evh_telemetry_riva
+| extend data = parse_json(data)
+| extend idSite = tostring(data.idSite),
+         siteName = tostring(data.siteName),
+         site = tostring(data.site),
+         version = tostring(data.version),
+         ingestion_timestamp = todatetime(data.timestamp),
+         metrics = todynamic(data.metrics)
+| project-away data
+| where isnotempty(metrics) and array_length( metrics) > 0
+| mv-expand metrics
+| evaluate bag_unpack(metrics)
+}
+ 
+.create-merge table rivaTelemetry (idSite:string,
+                                   siteName:string,
+                                   site:string,
+                                   version:string,
+                                   ingestionTimestamp:datetime,
+                                   bankState:long, //int
+                                   connectedStrings:long, //int
+                                   currentAvg:real,
+                                   currentMax:real,
+                                   currentMin:real,
+                                   extTemperature:real,
+                                   id:long, //int
+                                   resistanceAvg:real,
+                                   resistanceMax:real,
+                                   resistanceMin:real,
+                                   temperature:real,
+                                   timestamp:datetime,
+                                   voltageAvg:real,
+                                   voltageMax:real,
+                                   voltageMin:real) with (folder = 'telemetry')
+                                   
+ 
+.alter table rivaTelemetry policy update
+```[
+    {
+        "IsEnabled": true,
+        "Source": "evh_telemetry_riva",
+        "Query": "normalize_evh_telemetry_riva_metrics()",
+        "IsTransactional": false,
+        "PropagateIngestionProperties": true
+    }
+]```
+ 
+.alter table rivaTelemetry policy ingestionbatching
+```
+{
+    "MaximumBatchingTimeSpan" : "00:00:30",
+    "MaximumNumberOfItems" : 2000,
+    "MaximumRawDataSizeMB": 1024
+}
+```
+ 
+.show table rivaTelemetry policy ingestionbatching
+ 
+.set-or-append rivaTelemetry <|
+    normalize_evh_telemetry_riva_metrics()
+ 
+//.clear table rivaTelemetry data
+ 
+rivaTelemetry
+| summarize count()
+ 
+evh_telemetry_riva
+| extend data = parse_json(data)
+| extend idSite = tostring(data.idSite),
+         siteName = tostring(data.siteName),
+         site = tostring(data.site),
+         version = tostring(data.version),
+         ingestion_timestamp = todatetime(data.timestamp),
+         metrics = todynamic(data.metrics)
+| project-away data
+| where isnotempty(metrics) and array_length( metrics) > 0
+| mv-expand metrics
+| evaluate bag_unpack(metrics)
+| summarize count()
+ 
+//.drop table rivaTelemetry
+ 
+.show table evh_telemetry_riva policy retention
+ 
+.show table rivaTelemetry policy update
+ 
+evh_telemetry_riva
+//| take 10
+| extend data = parse_json(data)
+| evaluate bag_unpack(data)
+| project-away timestamp
+| mv-expand metrics
+| evaluate bag_unpack(metrics)
+| extend timestamp = todatetime(timestamp)
+| summarize arg_min(timestamp, *) by siteName
+ 
+ 
+ 
+.show materialized-view deviceTelemetry_Aggregate1m details
+ 
+.show diagnostics
+| project IsHealthy, NotHealthyReason, IsAttentionRequired, AttentionRequiredReason, IsScaleOutRequired
+ 
+.show commands-and-queries
+| where State == "Failed"
+ 
+.show materialized-view deviceTelemetry_Aggregate1m policy caching
+ 
+.show cluster
+ 
+.show operations | where StartedOn >= ago(2d) and State == "InProgress" and Operation == "TableSetOrAppend" | top 20 by StartedOn
+ 
+.show capacity
+ 
+ingest_volume | where timestamp >= ago(7d) | sort by count
+ 
+ 
+.alter-merge cluster policy capacity
+```{
+"MaterializedViewsCapacity": {
+"ClusterMinimumConcurrentOperations": 1,
+"ClusterMaximumConcurrentOperations": 12
+}
+}```
+ 
+.show cluster policy capacity
+ 
+.show materialized-view deviceTelemetry_Aggregate1m failures
+ 
+.show commands-and-queries
+| top 10 by StartedOn
+ 
+.show database ["isight-data"] journal
+| top 100 by EventTimestamp
+ 
+.show workload_groups
+ 
+.show ingestion failures
+| project Table, FailedOn, Details
+ 
+.alter-merge cluster policy capacity
+    ```
+    '{
+      "IngestionCapacity": {
+        "ClusterMaximumConcurrentOperations": 10
+      }
+    }'
+    ```
+    
+.show cluster policy capacity

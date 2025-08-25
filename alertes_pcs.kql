@@ -1,0 +1,168 @@
+/////////////////////Add PCS Supplier & PCS Generation to contract_Live///////////////////////////////////////
+
+//1
+.drop materialized-view contract_Live
+
+//2
+.alter table evh_business_assets policy caching hot = 3500d
+
+//3
+.create-or-alter  materialized-view with (backfill=true, folder='liveData') contract_Live on table evh_business_assets {
+    evh_business_assets
+    | project body=parse_json(data), timestamp=ingestion_time()
+    | project
+        timestamp,
+        assetHierarchyId=tostring(body.assetHierarchyId),
+        contractId=tostring(body.contractId),
+        contractName=tostring(body.contractName),
+        customer=tostring(body.customer),
+        product=tostring(body.product),
+        deleted=tobool(body.deleted),
+        region=tostring(body.address.region),
+        latitude=toreal(body.address.latitude),
+        longitude=toreal(body.address.longitude),
+        standardOffset=totimespan(body.address.timezone.standardOffset),
+        daylightSavings=totimespan(body.address.timezone.daylightSavings),
+        timezoneId=tostring(body.address.timezone.id),
+        sunrise=toreal(body.address.timezone.sunrise),
+        sunset=toreal(body.address.timezone.sunset),
+        pcsSupplier=tostring(body.pcsSupplier),
+        pcsGeneration=tostring(body.pcsGeneration),
+        assets=body.assets
+    | summarize arg_max(timestamp, *) by assetHierarchyId}
+
+//4
+contract()
+
+///////////////////////////Create Function to get PCS Faults Mapping//////////////////////////// 
+
+.create-or-alter function with (folder = "business", docstring = "Get PCS Faults Mapping", skipvalidation = "true") GetPCSFaultsMapping() {
+evh_business_references
+| summarize arg_max(unixtime_seconds_todatetime(tolong(parse_json(data)._ts)), *)
+| project-away max_
+| mv-expand data = extract_json("$.values", data, typeof(dynamic))
+| where data.name in ("Power Electronics", "SMA")
+| project pcsSupplier = tostring(data.name), configurations = data.configurations
+| mv-expand configurations
+| project pcsSupplier, name=tostring(configurations.name), generation=tostring(configurations.generation), values=configurations.values
+| mv-expand values
+| extend code = toint(bag_keys(values)[0])
+| extend label = tostring(values[tostring(code)])
+| project-away values
+}
+
+GetPCSFaultsMapping()
+
+
+//AC alerts
+let asset_mapping = asset()
+    | where assetType == "PCS" and isnotempty(technicalId)
+    | project contractName, deviceId=technicalId, pcsSupplier, pcsGeneration
+    | distinct *;
+let fault_mappings_raw = materialize(GetPCSFaultsMapping());
+let invSt_mapping = fault_mappings_raw | where name == "invSt";
+let faultId_mapping = fault_mappings_raw | where name == "faultId";
+let GetLastBinaryOctet = (inputId:int) {
+    let original_string = format_ipv4(inputId, 32);
+    let octets = split(original_string, ".");
+    toint(octets[array_length(octets) - 1])
+};
+deviceTelemetry_Live
+| where timestamp >= datetime(2025-08-01)
+| where metric in ("InvSt", "Fault_Id")
+| summarize
+    timestamp = max(timestamp),
+    InvState  = toint(take_anyif(value, metric == "InvSt")),
+    Fault_Id  = toint(take_anyif(value, metric == "Fault_Id"))
+    by deviceId, levelId
+| lookup kind=leftouter asset_mapping on deviceId
+| lookup kind=leftouter invSt_mapping  on pcsSupplier, $left.pcsGeneration == $right.generation, $left.InvState == $right.code
+| lookup kind=leftouter faultId_mapping on pcsSupplier, $left.pcsGeneration == $right.generation, $left.Fault_Id == $right.code
+| project contractName, deviceId, levelId, timestamp, pcsSupplier, pcsGeneration, InvState, InvStateLabel=label, Fault_Id, Fault_IdLabel=label1
+| extend Fault_Id = iff(pcsSupplier == "Power Electronics", GetLastBinaryOctet(Fault_Id), Fault_Id)
+| order by contractName asc, deviceId asc, levelId asc
+ 
+
+ 
+ //Alignement InvState et Fault_Id
+let asset_mapping = asset()
+    | where assetType == "PCS" and isnotempty(technicalId)
+    | project contractName, deviceId=technicalId, pcsSupplier, pcsGeneration
+    | distinct *;
+let _data = deviceTelemetry
+    | where timestamp >= ago(7d)
+    | where metric in ("InvSt", "Fault_Id")
+    | where not(levelId has_cs "PQM")
+    | where isnotempty(value)
+    | extend partitionKey = strcat(deviceId, " | ", levelId);
+_data
+| partition hint.strategy=shuffle by partitionKey (
+    order by timestamp asc
+    | scan declare (last_Fault_Id:string = "") with
+      (
+        step s1: true =>
+            last_Fault_Id = iff(metric == "Fault_Id", tostring(value), s1.last_Fault_Id);
+      )
+)
+| where metric == "InvSt"
+| project-away partitionKey, metric
+| project
+    deviceId,
+    levelId,
+    timestamp,
+    InvState = value,
+    Fault_Id = last_Fault_Id
+| where not(isempty(Fault_Id))
+| lookup kind=leftouter asset_mapping on deviceId
+| order by contractName asc, deviceId asc, levelId asc, timestamp asc
+ 
+ //Méthodes passage de la donnée on event pour ensuite pouvoir gérer l'alignement
+deviceTelemetry
+| where timestamp >= ago(5d)
+| where metric == "Fault_Id"
+| where not(levelId has_cs "PQM")
+| where isnotempty(value)
+| order by deviceId asc, levelId asc, timestamp asc
+| where deviceId != prev(deviceId) or levelId != prev(levelId) or value != prev(value)
+ 
+let PartialEvents = deviceTelemetry
+| where timestamp >= ago(5d)
+| where metric == "Fault_Id" and not(levelId has_cs "PQM") and isnotempty(value) // ou InvSt
+| project timestamp, deviceId, levelId, metric, value
+| extend partitionKey = strcat(deviceId, " | ", levelId, " | ", tostring(bin(timestamp, 1d)))
+| partition hint.strategy=shuffle by partitionKey (
+    sort by timestamp asc
+    | where value != prev(value)
+);
+PartialEvents
+| project-away partitionKey
+| order by deviceId asc, levelId asc, timestamp asc
+| where deviceId != prev(deviceId) or levelId != prev(levelId) or value != prev(value)
+ 
+ 
+ 
+let num_buckets = 1000;
+let HashedEvents = deviceTelemetry
+| where timestamp >= ago(5d)
+| where metric == "Fault_Id" and not(levelId has_cs "PQM") and isnotempty(value)
+| project timestamp, deviceId, levelId, value
+| extend bucket = hash(strcat(deviceId, levelId), num_buckets)
+;
+HashedEvents
+| partition hint.strategy=shuffle by bucket (
+    sort by deviceId asc, levelId asc, timestamp asc
+    | where deviceId != prev(deviceId) or levelId != prev(levelId) or value != prev(value)
+)
+| project-away bucket
+
+
+
+.show table deviceTelemetry policy roworder
+
+.alter table deviceTelemetry policy roworder (levelId asc, metric asc)
+
+deviceTelemetry | take 100
+
+settings
+
+

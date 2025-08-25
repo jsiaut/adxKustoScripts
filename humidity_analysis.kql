@@ -1,0 +1,21 @@
+telemetry(1d)
+| where timestamp >= datetime("2024-01-01")
+| where metric == "SubBankInsideHumidity"
+| lookup kind=leftouter (GetSiteDevices) on deviceId
+| project timestamp, site, deviceId, levelId, avg_value
+| where isnotempty(site)
+| extend startOfWeek = startofweek(timestamp)
+| summarize Temperature=round(percentile(avg_value, 50), 1) by startOfWeek, site
+| order by site
+| project-rename Month=startOfWeek, Site=site
+
+telemetry(1d)
+| where timestamp >= datetime("2024-01-01")
+| where metric == "SubBankInsideHumidity"
+| lookup kind=inner (GetSiteDevices | where isnotempty(site)) on deviceId
+| project timestamp, site, deviceId, levelId, avg_value
+| summarize Humidity=round(percentile(avg_value, 50), 1) by timestamp, site
+// | summarize Humidity=round(max(avg_value), 1) by timestamp, site
+| where Humidity >= 80 
+| order by site
+| project-rename Day=timestamp, Site=site

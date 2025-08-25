@@ -1,0 +1,100 @@
+//Open doors
+let allContracts = GetDeviceContracts();
+deviceTelemetryAggregate1h
+| where metric has "SB_OPEN_DOOR" and max_value == 1
+| summarize openDoorCount = sum(count_) by deviceId, levelId
+| lookup kind=inner allContracts on deviceId
+//| where contractName == "Ringo"
+| project openDoorCount, deviceId, levelId, contractName
+| sort by openDoorCount
+//| render columnchart
+
+
+//SoC time spend in anomaly
+telemetry(1h)
+| where metric == "SoC"
+| lookup kind=leftouter GetDeviceSites on deviceId
+| where site != ""
+| summarize
+    ['Critique (0-5%)'] = countif(min_value != 0 and avg_value < 5),
+    ['Faible (5-10%)'] = countif(min_value != 0 and avg_value >= 5 and avg_value < 10),
+    ['Temps Total'] = count(),
+    ['% Temps Critique'] = round(100.0 * countif(min_value != 0 and avg_value < 5) / count(), 1),
+    ['% Temps Faible'] = round(100.0 * countif(min_value != 0 and avg_value >= 5 and avg_value < 10) / count(), 1),
+    ['Dernière Mesure'] = max(timestamp)
+    by site, deviceId
+| project-reorder
+    site,
+    deviceId,
+    ['Critique (0-5%)'],
+    ['Faible (5-10%)'],
+    ['% Temps Critique'],
+    ['% Temps Faible'],
+    ['Temps Total'],
+    ['Dernière Mesure']
+| order by site asc
+
+//Conso Aux by day
+telemetry(1d)
+| where metric in ("AUX CumulActEne", "DCChEnergy", "DCDischEnergy")
+| extend value = max_value - min_value
+| lookup kind=leftouter GetDeviceSites on deviceId
+| where site != ""
+| project-keep timestamp, site, deviceId, metric, value
+| summarize MWh = sum(value) / 1e6 by timestamp, site, metric
+| order by timestamp asc, site asc, metric asc
+
+//Power min and max by day
+telemetry(1d)
+| where metric == "W"
+| where deviceId contains "cube"
+| lookup kind=leftouter GetDeviceSites on deviceId
+| where site != ""
+| project-keep timestamp, site, deviceId, max_value, min_value
+| order by timestamp asc, site asc
+ 
+//SoC min, avg and max by day
+telemetry(1d)
+| where metric == "SoC"
+| lookup kind=leftouter GetDeviceSites on deviceId
+| where site != ""
+| project-keep timestamp, site, deviceId, max_value, min_value, avg_value
+| order by timestamp asc, site asc
+
+
+//Temp anomaly
+deviceTelemetry_Aggregate1d
+| where metric == "ModTmpMax"
+| where max_value >= 40 and max_value != 105
+| join kind=leftouter deviceHierarchy_Live on deviceId
+| where deviceId == "cube-07e916"
+| order by timestamp
+
+deviceTelemetry_Aggregate1d
+| where metric == "ModTmpMax"
+| where max_value >= 40 and max_value != 105
+| summarize count() by deviceId
+| join kind=leftouter GetSiteDevices() on deviceId
+| order by count_
+
+telemetry(1d)
+| where metric == "ModTmpMax"
+| where max_value > 40 and max_value < 105
+| join kind=leftouter GetSiteDevices() on deviceId
+// | summarize count() by deviceId
+// | order by count_
+
+//Multiple Serial Numbers for 1 module (without 0)
+let SN =
+    telemetry(1d)
+    | where metric == "SN"
+    | where min_value != 0 and max_value != 0
+    | extend temp_column = min_value;
+SN
+| union (SN | extend temp_column = max_value)
+| summarize by deviceId, levelId, toint(temp_column)
+| summarize uniqueSN = make_list(temp_column) by deviceId, levelId
+| extend NbUniquesSN = array_length(uniqueSN)
+| join kind=leftouter GetDeviceContracts on deviceId
+| project-keep contractName, deviceId, levelId, uniqueSN, NbUniquesSN
+| order by NbUniquesSN                                    

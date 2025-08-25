@@ -1,0 +1,53 @@
+//NStrCon I-Sight
+let markDisconnectedAfter = 15m;
+let allContracts = GetDeviceContracts();
+let lastCommunication=deviceTelemetry_Live
+    | where eventType !in ("connectivity", "device")
+    | summarize lastMessageReceived = max(timestamp) by deviceId
+    | extend isOffline = lastMessageReceived < ago(markDisconnectedAfter);
+deviceTelemetry_Live
+| where metric in ("NStr", "NStrCon") //comment to see AC assets
+| join kind=inner lastCommunication on deviceId
+| join kind=inner allContracts on deviceId
+| summarize
+    take_any(contractName),
+    NStr=sumif(value, metric == 'NStr'),
+    NStrCon=sumif(value, metric == 'NStrCon' and not(isOffline)),
+    offline=make_set_if(deviceId, isOffline),
+    deviceList=make_set(deviceId),
+    lastOnlineList=make_set(lastMessageReceived)
+    by contractId
+| order by contractName asc
+
+deviceTelemetry_Live
+ | where eventType != "connectivity" //!in ("connectivity", "device")
+ | summarize lastMessageReceived=max(timestamp) by deviceId
+ | where lastMessageReceived <= ago(15m)
+ | project deviceId, lastMessageReceived
+
+
+//Live Status AC + DC
+deviceTelemetry_Live
+| where metric in ("SoC", "ModTmpMin", "ModTmpMax")
+| project-away levelId, eventType
+| lookup kind=inner GetDeviceContracts on deviceId
+| summarize
+contractName = take_any(contractName),
+    SOCmin = minif(value, metric == "SoC"), 
+    SOCmax = maxif(value, metric == "SoC"), 
+    Tmin = minif(value, metric == "ModTmpMin" and value != 105), 
+    Tmax = maxif(value, metric == "ModTmpMax" and value != 105)
+    by contractId
+| extend metricBag = bag_pack("SOCmin", SOCmin, "SOCmax", SOCmax, "Tmin", Tmin, "Tmax", Tmax)
+| mv-expand metricName = bag_keys(metricBag) to typeof(string)
+| mv-expand value = metricBag[metricName]
+| project contractId, contractName, metric=metricName, toreal(value)
+| union (
+deviceTelemetry_Live
+| where metric in~ ("Hz", "W", "VAR", "PPVphAB", "PPVphBC", "PPVphCA", "AphA", "AphB", "AphC") and levelId has "PQM-1"
+| project-away levelId, eventType
+| summarize timestamp = arg_max(timestamp, *) by deviceId, metricLower = tolower(metric)
+| project-away metricLower, timestamp
+| lookup kind=inner GetDeviceContracts on deviceId)
+| project contractId, contractName, metric, value
+| order by contractName asc, metric asc

@@ -1,0 +1,72 @@
+//ADX Fleet
+let start_date = datetime(2022-01-01);
+let batteryModels = telemetry(1d)
+| where timestamp >= start_date and metric == 'NStr' and levelId=='000000'
+| summarize max_NStr = max(max_value) by deviceId, bin(timestamp, 4d)
+| extend BatteryModel = case(
+    max_NStr in (3), 'IHE-1500 LFP 1.5MWh',
+    max_NStr in (6, 12, 18), 'IHE-1500 NMC',
+    max_NStr in (5, 10, 15, 20, 25), 'IHE-1500 LFP',
+    max_NStr in (8, 16, 24, 32, 40, 48, 56), 'i-Shift',
+    'Unknown');
+telemetry(1d)
+| where timestamp >= start_date and metric in ('SubBankAUX Freq', 'SubBankRemainingEnergy', 'SubBankHVACInTemp')
+| extend uniqueSubBankId = strcat(deviceId, '-', levelId)
+| join kind=inner (batteryModels) on deviceId
+| summarize MaxUniqueSubBanksPerDay = dcount(uniqueSubBankId) by bin(timestamp, 4d), BatteryModel
+| project date_col = format_datetime(timestamp, 'yyyy-MM-dd'), BatteryModel, MaxUniqueSubBanksPerDay
+| order by date_col asc, BatteryModel asc
+ 
+ 
+//ADX Fleet rework
+let start_date = datetime(2022-01-01);
+let dataExtract = telemetry(1d) | where timestamp >= start_date;
+let batteryModels = dataExtract
+| where metric == 'NStr' //and levelId=='000000' ==> inutile car NStr n'existe qu'au niveau Bank
+| summarize max_NStr = max(max_value) by deviceId, bin(timestamp, 4d)
+| extend BatteryModel = case(
+    max_NStr in (3), 'IHE-1500 LFP 1.5MWh',
+    max_NStr in (6, 12, 18), 'IHE-1500 NMC',
+    max_NStr in (5, 10, 15, 20, 25), 'IHE-1500 LFP',
+    max_NStr in (8, 16, 24, 32, 40, 48, 56), 'i-Shift',
+    'Unknown');
+dataExtract
+| where levelId in ("010000","020000","030000","040000","050000","060000","070000","080000") // metric in ('SubBankAUX Freq', 'SubBankRemainingEnergy', 'SubBankHVACInTemp')
+| extend uniqueSubBankId = strcat(deviceId, '-', levelId)
+| lookup kind=inner (batteryModels) on deviceId //change for lookup ==> enrichir avec petite table de droite
+| summarize MaxUniqueSubBanksPerDay = dcount(uniqueSubBankId) by bin(timestamp, 4d), BatteryModel
+| project date_col = format_datetime(timestamp, 'yyyy-MM-dd'), BatteryModel, MaxUniqueSubBanksPerDay
+| order by date_col asc, BatteryModel asc
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+//ADX SB per site
+telemetry(1d)
+| where timestamp >= datetime(2022-01-01) and levelId matches regex @'^0[1-8]0000$'
+| join kind=leftouter (
+    GetDeviceSites
+    | project deviceId, site
+) on deviceId
+| extend site = iff(isempty(site), 'Undeclared', site)
+| extend uniqueId = strcat(site, '-', deviceId, '-', levelId)
+| summarize Nb_Subbanks = dcount(uniqueId) by date_col = format_datetime(timestamp, 'yyyy-MM-dd'), site
+| order by date_col asc, site asc
+ 
+//ADX SB per site rework
+telemetry(1d)
+| where timestamp >= datetime(2022-01-01) //and levelId matches regex @'^0[1-8]0000$' ==> regex très coûteuses dans adx, à éviter si possible
+| where levelId in ("010000","020000","030000","040000","050000","060000","070000","080000")
+| lookup kind=leftouter ( //change for lookup
+    GetDeviceSites
+    | project deviceId, site
+) on deviceId
+| extend site = coalesce(site, "Undeclared") //change for coalesce
+| extend uniqueId = strcat(site, '-', deviceId, '-', levelId)
+| summarize Nb_Subbanks = dcount(uniqueId) by date_col = format_datetime(timestamp, 'yyyy-MM-dd'), site
+| order by date_col asc, site asc   

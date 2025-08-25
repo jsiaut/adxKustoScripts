@@ -1,0 +1,276 @@
+  // Frequency
+telemetry(0s) //pas exactement les mêmes valeurs (drop duplicates ?)
+| where metric == "Hz"
+| where deviceId == 'TBCCB1001666'
+| where levelId startswith_cs "PQM"
+| distinct *
+| extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+| where local_time >= datetime(2025-02-01)
+| summarize Mean_Frequency = avg(avg_value), Count=count() by format_datetime(local_time, 'yyyy-MM-dd')
+| order by local_time asc
+| render 
+
+
+// Availability
+external_table("ACContractualAvailability_noExclusion")
+| where timestamp >= datetime(2025-02-01)
+| where contractId == "25070a20-4589-45a1-a82a-5746d0b6f321"
+| summarize Availability = avg(InstantaneousContractualAvailability) by format_datetime(timestamp, 'yyyy-MM-dd')
+
+
+// External temperature
+let timeZone = 'US/Central';
+let startTimeUtc = datetime_local_to_utc(datetime(2025-02-01), timeZone);
+let site_ac_devices = GetDeviceSites
+| where site == "Myrtle 1"
+| where deviceId hasprefix_cs "cube"
+| summarize site_ac_devices = make_set(deviceId);
+telemetry(1h) //1h seems ok
+| where timestamp >= startTimeUtc
+| extend local_time = datetime_utc_to_local(timestamp, timeZone)
+| where deviceId in (site_ac_devices)
+| where metric == "SubBankHVACOutTemp"
+| summarize ["Min External Temperature"] = min(min_value),
+            ["Max External Temperature"] = max(max_value),
+            Count = sum(count_)
+            by format_datetime(local_time, 'yyyy-MM-dd')
+| order by local_time asc
+            
+
+// SoC min, max, avg
+let startTimeLocal = datetime(2025-02-20T00:00:00);
+let endTimeLocal = datetime(2025-02-22T23:59:59);
+let timeZone = 'US/Central';
+let site_dc_devices = GetDeviceSites
+| where site == "Myrtle 2"
+| where deviceId hasprefix_cs "cube"
+| summarize site_dc_devices = make_set(deviceId);
+let agg_soc = (period:string="D") {
+    let data = telemetry(0s) // fréquence métrique toutes les 30s
+    | where timestamp between(datetime_local_to_utc(startTimeLocal, timeZone) .. datetime_local_to_utc(endTimeLocal, timeZone))
+    | extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+    | where deviceId in (site_dc_devices)
+    | where metric == "SoC" and avg_value != 0 and max_value != 0 and min_value != 0
+    | distinct *
+    | extend local_time = bin(local_time, 1m)
+    | summarize mean=avg(avg_value),
+                min=min(min_value),
+                max=max(max_value),
+                count=sum(count_)
+      by deviceId, local_time //contractId, deviceId, timestamp
+    | extend sampling = iff(
+        period == "D",
+        startofday(local_time),
+        iff(
+          period == "W",
+          startofweek(local_time),
+          iff(
+            period == "M",
+            startofmonth(local_time),
+            startofday(local_time)
+          )
+        )
+      )
+    | summarize ["Average SoC (%)"] = avg(mean),
+                ["Min SoC (%)"] = min(min),
+                ["Max SoC (%)"] = max(max),
+                count = sum(count)
+      by sampling //contractId, sampling
+    | order by sampling asc; //contractId asc;
+    data
+};
+agg_soc("D")
+ 
+ 
+ 
+ 
+let startTimeLocal = datetime(2025-02-20T00:00:00);
+let endTimeLocal = datetime(2025-02-22T23:59:59);
+let timeZone = 'US/Central';
+let site_dc_devices = GetDeviceSites
+| where isnotempty(site)
+| where deviceId hasprefix_cs "cube"
+| summarize site_dc_devices = make_set(deviceId);
+let agg_soc = (period:string="D") {
+    let data = telemetry(0s) // fréquence métrique toutes les 30s
+    | where timestamp between(datetime_local_to_utc(startTimeLocal, timeZone) .. datetime_local_to_utc(endTimeLocal, timeZone))
+    | extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+    | where deviceId in (site_dc_devices)
+    | where metric == "SoC" and avg_value != 0 and max_value != 0 and min_value != 0
+    | distinct *
+    | extend local_time = bin(local_time, 1m)
+    | lookup kind=leftouter GetDeviceSites on deviceId
+    | summarize mean=avg(avg_value),
+                min=min(min_value),
+                max=max(max_value),
+                count=sum(count_)
+      by site, deviceId, local_time
+    | extend sampling = iff(
+        period == "D",
+        startofday(local_time),
+        iff(
+          period == "W",
+          startofweek(local_time),
+          iff(
+            period == "M",
+            startofmonth(local_time),
+            startofday(local_time)
+          )
+        )
+      )
+    | summarize ["Average SoC (%)"] = round(avg(mean), 1),
+                ["Min SoC (%)"] = round(min(min), 1),
+                ["Max SoC (%)"] = round(max(max), 1),
+                count = sum(count)
+      by site, sampling
+    | order by sampling asc, site asc;
+    data
+};
+agg_soc("D")
+
+
+// max, avg W at site level (DC)
+let timeZone = 'US/Central';
+let startTimeUtc = datetime_local_to_utc(datetime(2025-02-20), timeZone);
+let endTimeUtc = datetime_local_to_utc(endofday(datetime(2025-02-22)), timeZone);
+let site_devices = GetDeviceSites
+| where site == "Myrtle 2"
+| where deviceId hasprefix_cs "cube"
+| summarize make_set(deviceId);
+let agg_W = (period:string="D") {
+    telemetry(0s)
+    | where timestamp between(startTimeUtc .. endTimeUtc)
+    | where deviceId in (site_devices)
+    | where metric == "W" and avg_value > 0 // > 0 en décharge
+    | distinct *
+    | extend local_time = datetime_utc_to_local(timestamp, timeZone)
+    | summarize mean=avg(avg_value), max=max(max_value), count=sum(count_)
+      by deviceId, bin(local_time, 1m)
+    | extend period_start = case(
+        period == "D", startofday(local_time),
+        period == "W", startofweek(local_time),
+        period == "M", startofmonth(local_time),
+        startofday(local_time)
+    )
+    | summarize mean=avg(mean), max=max(max), count=sum(count)
+      by period_start, deviceId
+    | summarize ["Average W (MW)"] = sum(mean),
+                ["Max W (MW)"] = sum(max),
+                count = sum(count)
+      by period_start
+    | order by period_start asc
+};
+agg_W("D")
+
+
+// Max Power Daily (AC)
+telemetry(0s) //fréquence 1s
+| extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+| where local_time between(datetime(2025-01-01) .. endofday(ago(1d)))
+| where deviceId == 'TBCCB1001666' and metric == 'W' and levelId == 'PQM-1'
+| where avg_value > 0 // > 0 charge
+| distinct * // à modifier
+| summarize MeanPower=avg(avg_value), MaxPower=max(max_value), count=sum(count_) by bin(local_time, 1d)
+| project date_col=format_datetime(local_time, 'yyyy-MM-dd'), MeanPower, MaxPower, count
+| order by date_col asc
+
+telemetry(0s)
+| extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+| where local_time between(datetime(2025-01-01) .. endofday(ago(1d)))
+| where deviceId == 'TBCCB1001666' and metric == 'W' and levelId == 'PQM-1'
+//| where avg_value > 0
+| summarize 
+    unique_count = dcount(avg_value),
+    unique_values = make_set(avg_value)
+  by timestamp
+| where unique_count > 1
+| project-away unique_count
+| extend diff = abs(todouble(unique_values[0]) - todouble(unique_values[1]))
+| sort by diff
+
+
+// Throughput Auxilliaires (DC)
+let startTimeLocal = datetime(2025-02-20);
+let endTimeLocal = datetime(2025-02-23);
+let timeZone = 'US/Central';
+let site_dc_devices = GetDeviceSites
+| where site == "Myrtle 2"
+| where deviceId hasprefix_cs "cube"
+| summarize site_ac_devices = make_set(deviceId);
+telemetry(1h) // fréquence 1h
+| where timestamp between(datetime_local_to_utc(startTimeLocal, timeZone) .. datetime_local_to_utc(endTimeLocal, timeZone))
+| extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+| where deviceId in (site_dc_devices)
+| where metric == 'AUX CumulActEne'
+| summarize (StartDate, StartValue)=arg_min(local_time, avg_value),
+            (EndDate, EndValue)=arg_max(local_time, avg_value)
+  by bin(local_time, 1d), deviceId
+| extend Throughput_by_cube = EndValue - StartValue
+| summarize Throughput=sum(Throughput_by_cube) by bin(local_time, 1d)
+
+
+// Throughput Auxilliaires SubBank Level (DC)
+let startTimeLocal = datetime(2025-06-16);
+let endTimeLocal = datetime(2025-07-24);
+let timeZone = 'US/Central';
+let site_dc_devices = GetDeviceSites
+| where site in ("Myrtle 1", "Myrtle 2")
+| where deviceId hasprefix_cs "cube"
+| summarize site_ac_devices = make_set(deviceId);
+telemetry(1h)
+| where timestamp between(datetime_local_to_utc(startTimeLocal, timeZone) .. datetime_local_to_utc(endTimeLocal, timeZone))
+| extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+| where deviceId in (site_dc_devices)
+| where metric == 'SubBankAUX CumulActEne'
+| summarize (StartDate, StartValue)=arg_min(local_time, avg_value),
+            (EndDate, EndValue)=arg_max(local_time, avg_value)
+  by bin(local_time, 1d), deviceId, levelId
+| extend Throughput_by_cube = EndValue - StartValue
+| summarize Throughput=sum(Throughput_by_cube) //by bin(local_time, 1d)
+
+
+//Throughpout daily (DC)
+let startTimeLocal = datetime(2025-02-20);
+let endTimeLocal = datetime(2025-02-23);
+let timeZone = 'US/Central';
+let site_dc_devices = GetDeviceSites
+| where site == "Myrtle 2"
+| where deviceId hasprefix_cs "cube"
+| summarize site_dc_devices = make_set(deviceId);
+telemetry(0s)
+| where timestamp between(datetime_local_to_utc(startTimeLocal, timeZone) .. datetime_local_to_utc(endTimeLocal, timeZone))
+| extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+| where deviceId in (site_dc_devices)
+| where metric == 'DCChEnergy'
+| summarize (StartDate, StartValue)=arg_min(local_time, avg_value),
+            (EndDate, EndValue)=arg_max(local_time, avg_value)
+  by bin(local_time, 1d), deviceId
+| extend Throughput_by_cube = EndValue - StartValue
+| summarize Throughput=sum(Throughput_by_cube) by bin(local_time, 1d)
+
+
+// Throughputs daily (AC)
+telemetry(0s)
+| extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+| where local_time >= datetime(2025-02-01)
+//| where local_time between(datetime(2025-02-01T00:00:00) .. datetime(2025-02-11T23:59:59))
+| where deviceId == 'TBCCB1001666' and levelId == 'PQM-1' and metric == 'TotWhImp'
+| summarize (StartDate, StartValue)=arg_min(local_time, avg_value), 
+            (EndDate, EndValue)=arg_max(local_time, avg_value) 
+  by bin(local_time, 1d)
+| extend Throughput = EndValue - StartValue
+
+let site_ac_devices = GetDeviceSites
+| where site == "Myrtle 2"
+| where deviceId !hasprefix_cs "cube"
+| summarize site_ac_devices = make_set(deviceId);
+telemetry(0s) // fréquence 1s
+| extend local_time = datetime_utc_to_local(timestamp, 'US/Central')
+| where local_time >= datetime(2025-02-01T00:00:00)
+//| where local_time between(datetime(2025-02-01T00:00:00) .. datetime(2025-02-11T23:59:59))
+| where deviceId in (site_ac_devices)
+| where levelId == 'PQM-1' and metric == 'TotWhExp'
+| summarize (StartDate, StartValue)=arg_min(local_time, avg_value), 
+            (EndDate, EndValue)=arg_max(local_time, avg_value) 
+  by bin(local_time, 1d)
+| extend Throughput = EndValue - StartValue
