@@ -162,7 +162,3 @@ HashedEvents
 .alter table deviceTelemetry policy roworder (levelId asc, metric asc)
 
 deviceTelemetry | take 100
-
-settings
-
-

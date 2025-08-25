@@ -26,5 +26,3 @@ deviceTelemetry
 | extend eventStart = datetime_utc_to_local(eventStart, timezoneId), eventEnd = datetime_utc_to_local(eventEnd, timezoneId)
 | project-away timezoneId
 //| summarize count() by metric, deviceId
-
-//ceci est un test de fdp
