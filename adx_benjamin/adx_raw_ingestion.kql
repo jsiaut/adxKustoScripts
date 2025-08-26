@@ -1,0 +1,78 @@
+
+.alter database ['isight-data'] policy ingestionbatching
+```{  "MaximumBatchingTimeSpan": "00:05:00",  "MaximumNumberOfItems": 500,  "MaximumRawDataSizeMB": 1024}```
+
+// CUBE
+.create-merge table evh_telemetry_cube (data:string) with (folder = 'ingestion')
+
+.alter column evh_telemetry_cube.data policy encoding type='BigObject32'
+
+.alter-merge table evh_telemetry_cube policy retention softdelete = 2d
+
+.alter table evh_telemetry_cube policy caching hot =1h
+ 
+// AC 
+.create-merge table evh_telemetry_ac (data:string) with (folder = 'ingestion')
+
+.alter column evh_telemetry_ac.data policy encoding type='BigObject32'
+
+.alter-merge table evh_telemetry_ac policy retention softdelete = 2d
+ 
+.alter table evh_telemetry_ac policy caching hot =1h
+
+// Riva
+.create-merge table evh_telemetry_riva (data:string) with (folder = 'ingestion')
+
+.alter column evh_telemetry_riva.data policy encoding type='BigObject32'
+
+//.alter-merge table evh_telemetry_riva policy retention softdelete = 2d
+ 
+.alter table evh_telemetry_riva policy caching hot =1h
+
+// device-connectivity 
+.create-merge table evh_device_connectivity (data:string) with (folder = 'ingestion')
+
+.alter column evh_device_connectivity.data policy encoding type='BigObject32'
+
+.alter-merge table evh_device_connectivity policy retention softdelete = 2d
+
+.alter table evh_device_connectivity policy caching hot =1h
+ 
+// device-creation 
+.create-merge table evh_device_creation (data:string) with (folder = 'ingestion')
+
+.alter column evh_device_creation.data policy encoding type='BigObject32'
+
+.alter-merge table evh_device_creation policy retention softdelete = 2d
+
+.alter table evh_device_creation policy caching hot =1h
+ 
+// device-twin 
+.create-merge  table evh_device_twin  (['version']:int, ['properties']:dynamic, ['deviceId']:string) with (folder = 'ingestion')
+
+.create-or-alter table evh_device_twin ingestion json mapping 'evh_device_twin_json_mapping' 
+```[
+ {"column":"version", "Properties":{"Path":"$[\'version\']"}}
+,{"column":"properties", "Properties":{"Path":"$[\'properties\']"}}
+,{"column":"deviceId", "Properties":{"Path":"$[\'iothub-connection-device-id\']"}}
+]```
+
+.alter-merge table evh_device_twin policy retention softdelete = 2d
+
+.alter table evh_device_twin policy caching hot =1h
+ 
+ 
+// business-assets
+.create-merge table evh_business_assets (data:string) with (folder = 'ingestion')
+
+.alter column evh_business_assets.data policy encoding type='BigObject32'
+
+.alter table evh_business_assets policy caching hot =1h
+ 
+// business-references
+.create-merge table evh_business_references (data:string) with (folder = 'ingestion')
+
+.alter column evh_business_references.data policy encoding type='BigObject32'
+
+.alter table evh_business_references policy caching hot =1h
+ 

@@ -1,0 +1,37 @@
+.create-or-alter function
+ with (docstring = 'Parses raw Asset hierarchy records into strongly-typed columns', folder = 'business')
+contract()  
+{
+contract_Live | where deleted!=true
+}
+
+.create-or-alter function
+ with (docstring = 'Parses raw Asset hierarchy records into strongly-typed columns', folder = 'business')
+asset()  
+{
+contract
+|mv-expand assets
+|extend assetId=tostring(assets.assetId),assetType=tostring(assets.assetType),assetLevel=tostring(assets.assetLevel),levelId =tostring(assets.levelId),siteLabel=tostring(assets.siteLabel),technicalId=tostring(assets.technicalId),parentId=tostring(assets.parentId)
+|project-away assets
+}
+
+
+.create-or-alter function with (folder = 'Trender', docstring = "get all legacy and current telemetry aggregates and raw", skipvalidation = "true") 
+GetTelemetryAggregates(aggSize:timespan){
+union 
+    (legacyTelemetry_Aggregate1d|where aggSize==1d)
+    ,(legacyTelemetry_Aggregate1h|where aggSize==1h)
+    ,(legacyTelemetry_Aggregate1m|where aggSize==1m)
+    ,(legacyTelemetry_Raw|where aggSize==0s|project timestamp,eventType,deviceId,levelId,metric,min_value=value,avg_value=value,max_value=value,count_=1)
+    ,(deviceTelemetry_Aggregate1d|where aggSize==1d)
+    ,(deviceTelemetry_Aggregate1h|where aggSize==1h)
+    ,(deviceTelemetry_Aggregate1m|where aggSize==1m)
+    ,(deviceTelemetry|where aggSize==0s|project timestamp,eventType,deviceId,levelId,metric,min_value=value,avg_value=value,max_value=value,count_=1)
+|project timestamp,eventType,deviceId,levelId,metric,min_value,avg_value,max_value,count_
+}
+
+.create-or-alter function with (folder = 'Trender', docstring = "get all legacy and current raw telemetry", skipvalidation = "true") 
+GetTelemetryRaw(){
+GetTelemetryAggregates(0s)
+|project timestamp,eventType,deviceId,levelId,metric,value=min_value
+}

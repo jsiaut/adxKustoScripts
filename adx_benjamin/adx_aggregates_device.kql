@@ -1,0 +1,36 @@
+// Availability
+.create-or-alter materialized-view with (folder ='aggregates/deviceTelemetry') deviceTelemetry_Availability on table deviceTelemetry { 
+    deviceTelemetry| summarize Availability = count() by bin(timestamp,1d)
+}
+
+// 1d
+// with last_value & last_timestamp
+.create-or-alter materialized-view with(folder ='aggregates/deviceTelemetry') deviceTelemetry_Aggregate1d on table deviceTelemetry
+{
+    deviceTelemetry 
+    | summarize min(value),avg(value),max(value),count(),arg_max(last_timestamp=timestamp,last_value=value) by bin(timestamp,1d),eventType,deviceId,levelId,metric
+}
+
+// 1h
+.create-or-alter materialized-view with(folder ='aggregates/deviceTelemetry') deviceTelemetry_Aggregate1h on table deviceTelemetry
+{
+    deviceTelemetry 
+    | summarize min(value),avg(value),max(value),count() by bin(timestamp,1h),eventType,deviceId,levelId,metric
+}
+
+// 1m
+.create-or-alter materialized-view with(folder ='aggregates/deviceTelemetry') deviceTelemetry_Aggregate1m on table deviceTelemetry
+{
+    deviceTelemetry 
+    | summarize min(value),avg(value),max(value),count() by bin(timestamp,1m),eventType,deviceId,levelId,metric
+}
+
+// cache
+
+.alter materialized-view deviceTelemetry_Aggregate1m policy caching hot =5000m
+
+.alter materialized-view deviceTelemetry_Aggregate1h policy caching hot =3000h
+
+.alter materialized-view deviceTelemetry_Aggregate1d policy caching hot =3500d
+
+.alter materialized-view deviceTelemetry_Availability policy caching hot =3500d

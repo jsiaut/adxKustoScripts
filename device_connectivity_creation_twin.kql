@@ -1,0 +1,34 @@
+evh_device_connectivity
+| extend data = parse_json(data)[0]
+| extend timestamp = todatetime(data.eventTime), deviceId = tostring(data.data.deviceId)
+| project-away data
+| summarize arg_max(timestamp, *) by deviceId
+
+
+//Pour DC
+evh_device_twin
+| where deviceId startswith "cube"
+| project deviceId, softwareVersion = tostring(properties.reported.softwareInfo.opsw), timestamp = todatetime(properties.reported.softwareInfo.["date"])
+| summarize arg_max(timestamp, *) by deviceId
+| order by timestamp
+
+          
+evh_device_twin 
+| where not(deviceId startswith "cube")
+| project deviceId, 
+          status = tostring(properties.reported.clients.[strcat(deviceId, "/", "thingspro-agent")].status), 
+          lastDisconnectedTimeUtc = todatetime(properties.reported.clients.[strcat(deviceId, "/", "thingspro-agent")].lastDisconnectedTimeUtc)
+| summarize arg_max(lastDisconnectedTimeUtc, *) by deviceId, status
+| order by lastDisconnectedTimeUtc
+//| lookup kind=leftouter (asset | project-rename deviceId = technicalId) on deviceId
+
+
+//à continuer...
+evh_device_creation 
+| take 1
+| extend data = parse_json(data)[0]
+| evaluate bag_unpack(data)
+| evaluate bag_unpack(data)
+| project-rename device_id = deviceId
+| evaluate bag_unpack(twin)
+| evaluate bag_unpack(properties)

@@ -1,0 +1,31 @@
+.alter-merge database ['isight-data'] policy managed_identity ```[{"ObjectId": "system","AllowedUsages": "ExternalTable"}]```
+
+.create-or-alter external table ACContractualAvailability_noExclusion kind=delta
+(    h@'abfss://ds-gold-results@${storageAccountName}.dfs.core.windows.net/ACContractualAvailability_noExclusion;managed_identity=system')
+
+.create-or-alter external table DCContractualAvailability_noExclusion kind=delta
+(    h@'abfss://ds-gold-results@${storageAccountName}.dfs.core.windows.net/DCContractualAvailability_noExclusion;managed_identity=system')
+
+.create-or-alter external table DCContractTableForSilverAug kind=delta
+(    h@'abfss://ds-silver-refined@${storageAccountName}.dfs.core.windows.net/DCContractTableForSilverAug;managed_identity=system')
+
+.create-or-alter external table ACContractTableForSilverAug kind=delta
+(    h@'abfss://ds-silver-refined@${storageAccountName}.dfs.core.windows.net/ACContractTableForSilverAug;managed_identity=system')
+
+.create-or-alter external table NStrRatio kind=delta
+(    h@'abfss://ds-gold-results@${storageAccountName}.dfs.core.windows.net/NStrRatio;managed_identity=system')
+
+.create-or-alter external table ACSilver kind=delta
+(    h@'abfss://ds-silver-refined@${storageAccountName}.dfs.core.windows.net/ACMetricsRefined;managed_identity=system')
+
+.create-or-alter external table DCBankDailyThroughput kind=delta
+(    h@'abfss://ds-gold-results@${storageAccountName}.dfs.core.windows.net/DCBankDailyThroughput;managed_identity=system')
+
+.create-or-alter external table DCBankYearlyThroughput kind=delta
+(    h@'abfss://ds-gold-results@${storageAccountName}.dfs.core.windows.net/DCBankYearlyThroughput;managed_identity=system')
+ 
+.create-or-alter external table AggWindowedContractSummableMetrics kind=delta
+(    h@'abfss://ds-gold-results@${storageAccountName}.dfs.core.windows.net/AggWindowedContractSummableMetrics;managed_identity=system')
+
+.create-or-alter external table AggWindowedContractAvgbleMetrics kind=delta
+(    h@'abfss://ds-gold-results@${storageAccountName}.dfs.core.windows.net/AggWindowedContractAvgbleMetrics;managed_identity=system')

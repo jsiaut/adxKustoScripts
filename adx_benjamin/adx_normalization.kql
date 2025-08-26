@@ -1,0 +1,194 @@
+// adx_normalization
+
+// CUBE
+
+.create-or-alter function
+ with (docstring = 'Parses raw Cube Fault records into strongly-typed event columns', folder = 'normalize')
+     normalize_evh_telemetry_cube_faults()
+{
+evh_telemetry_cube | project body=parse_json(data)
+| extend deviceId=tostring(body.deviceId),timestamp=todatetime(body.emissionDate),clientId=tostring(body.clientId),faults=todynamic(body.faults)
+| where isnotempty(faults) and array_length( faults)>0  
+| mv-expand faults
+| extend eventTimestamp=todatetime(faults.timestamp),eventAssetId=tostring(faults.idLevel),eventName=tostring(faults.name),eventValue=todouble(faults.active)
+| project deviceId,levelId=eventAssetId,metric=eventName,timestamp=eventTimestamp,value=eventValue,eventType='fault'
+}
+
+.create-or-alter function
+ with (docstring = 'Parses raw Cube Metric records into strongly-typed event columns', folder = 'normalize')
+     normalize_evh_telemetry_cube_metrics()  
+{
+evh_telemetry_cube | project body=parse_json(data)
+| extend deviceId=tostring(body.deviceId),timestamp=todatetime(body.emissionDate),clientId=tostring(body.clientId),metrics=todynamic(body.metrics)
+| where isnotempty( metrics) and array_length( metrics)>0  
+| mv-expand metrics
+| extend eventTimestamp=todatetime(metrics.timestamp),eventAssetId=tostring(metrics.idLevel),eventName=tostring(metrics.name),eventValue=todouble(metrics.value)
+| project deviceId,levelId=eventAssetId,metric=eventName,timestamp=eventTimestamp,value=eventValue,eventType='metric'
+}
+
+.create-or-alter function
+ with (docstring = 'Parses raw Cube System records into strongly-typed event columns', folder = 'normalize')
+     normalize_evh_telemetry_cube_system()
+{
+evh_telemetry_cube | project body=parse_json(data)
+| extend deviceId=tostring(body.deviceId),timestamp=todatetime(body.emissionDate),clientId=tostring(body.clientId),system=todynamic(body.system)
+| where isnotempty(system) and array_length(system)>0  
+| mv-expand system
+| extend eventTimestamp=todatetime(system.timestamp),eventAssetId=tostring(system.idLevel),eventName=tostring(system.name),eventValue=todouble(system.value)
+| project deviceId,levelId=eventAssetId,metric=eventName,timestamp=eventTimestamp,value=eventValue,eventType='system'
+}
+
+// AC
+
+.create-or-alter function
+ with (docstring = 'Parses raw AC Fault records into strongly-typed event columns', folder = 'normalize')
+     normalize_evh_telemetry_ac_faults()  
+{
+evh_telemetry_ac | project body=parse_json(data)
+| extend deviceId=tostring(body.deviceId),timestamp=todatetime(body.emissionDate),contractId=tostring(body.contractId),faults=todynamic(body.faults)
+| where isnotempty( faults) and array_length( faults)>0  
+| mv-expand faults
+| extend eventTimestamp=todatetime(faults.timestamp),eventAssetId=tostring(faults.idAsset),eventName=tostring(faults.name),eventValue=todouble(faults.active)
+| project deviceId,levelId=eventAssetId,metric=eventName,timestamp=eventTimestamp,value=eventValue,eventType='fault'
+}
+
+.create-or-alter function
+ with (docstring = 'Parses raw AC Metric records into strongly-typed event columns', folder = 'normalize')
+     normalize_evh_telemetry_ac_metrics()  
+{
+evh_telemetry_ac | project body=parse_json(data)
+| extend deviceId=tostring(body.deviceId),timestamp=todatetime(body.emissionDate),contractId=tostring(body.contractId),metrics=todynamic(body.metrics)
+| where isnotempty( metrics) and array_length( metrics)>0  
+| mv-expand metrics
+| extend eventTimestamp=todatetime(metrics.timestamp),eventAssetId=tostring(metrics.idAsset),eventName=tostring(metrics.name),eventValue=todouble(metrics.value)
+| project deviceId,levelId=eventAssetId,metric=eventName,timestamp=eventTimestamp,value=eventValue,eventType='metric'
+}
+
+
+// CONNECTIVITY
+ 
+.create-or-alter function
+ with (docstring = 'Parses raw connectivity records into strongly-typed event columns', folder = 'normalize')
+     normalize_evh_device_connectivity()  
+{
+evh_device_connectivity 
+| project body=parse_json(data)
+| mv-expand body
+| extend timestamp=todatetime(body.eventTime),subject=tostring(body.subject),eventType=tostring(body.eventType)
+| extend deviceId=replace_string(subject,'devices/',''),value=todouble(eventType=='Microsoft.Devices.DeviceConnected')
+| project deviceId,levelId='',metric='DeviceConnected',timestamp,value,eventType='device'
+}
+
+// NORMALIZED INGESTION
+
+
+// device_telemetry
+
+.create-merge  table deviceTelemetry (deviceId:string,levelId:string,metric:string,timestamp:datetime,value:double,eventType:string) with (folder = 'telemetry')
+
+.alter table deviceTelemetry policy update 
+```[
+ { "IsEnabled": true, "Source": "evh_telemetry_cube", "Query": "normalize_evh_telemetry_cube_faults()", "IsTransactional": false, "PropagateIngestionProperties": true}
+,{ "IsEnabled": true, "Source": "evh_telemetry_cube", "Query": "normalize_evh_telemetry_cube_metrics()", "IsTransactional": false, "PropagateIngestionProperties": true}
+,{ "IsEnabled": true, "Source": "evh_telemetry_cube", "Query": "normalize_evh_telemetry_cube_system()", "IsTransactional": false, "PropagateIngestionProperties": true}
+,{ "IsEnabled": true, "Source": "evh_telemetry_ac", "Query": "normalize_evh_telemetry_ac_faults()", "IsTransactional": false, "PropagateIngestionProperties": true}
+,{ "IsEnabled": true, "Source": "evh_telemetry_ac", "Query": "normalize_evh_telemetry_ac_metrics()", "IsTransactional": false, "PropagateIngestionProperties": true}
+,{ "IsEnabled": true, "Source": "evh_device_connectivity", "Query": "normalize_evh_device_connectivity()", "IsTransactional": false, "PropagateIngestionProperties": true}
+]```
+
+.alter table deviceTelemetry policy caching hot =3d
+
+.create-or-alter materialized-view with(folder ='liveData') deviceTelemetry_Live on table deviceTelemetry
+{
+    deviceTelemetry | summarize arg_max(timestamp,*) by deviceId,levelId,metric,eventType
+}
+
+.alter materialized-view deviceTelemetry_Live policy caching hot =3650d
+
+
+// device_logs
+
+.create-merge table deviceLogs (deviceId:string,levelId:string,metric:string,timestamp:datetime,value:string,eventType:string) with (folder = 'telemetry')
+
+.create-or-alter function
+ with (docstring = 'Parses raw Cube Log records into strongly-typed event columns', folder = 'normalize')
+     normalize_evh_telemetry_cube_logs()  
+{
+evh_telemetry_cube | project body=parse_json(data)
+| extend deviceId=tostring(body.deviceId),timestamp=todatetime(body.emissionDate),clientId=tostring(body.clientId),logs=todynamic(body.logs)
+| where isnotempty(logs) and array_length(logs)>0  
+| mv-expand logs
+| extend eventTimestamp=todatetime(logs.timestamp),eventAssetId=tostring(logs.idLevel),eventName=tostring(logs.name),eventValue=tostring(logs.value)
+| project deviceId,levelId=eventAssetId,metric=eventName,timestamp=eventTimestamp,value=eventValue,eventType='log'
+}
+
+.alter table deviceLogs policy update 
+```[
+{ "IsEnabled": true, "Source": "evh_telemetry_cube", "Query": "normalize_evh_telemetry_cube_logs()", "IsTransactional": false, "PropagateIngestionProperties": false}
+]```
+
+.alter table deviceLogs policy caching hot =3d
+
+.create-or-alter materialized-view with(folder ='liveData') deviceLogs_Live on table deviceLogs
+{
+    deviceLogs | summarize arg_max(timestamp,*) by deviceId,levelId,metric,eventType
+}
+
+.alter materialized-view deviceLogs_Live policy caching hot =3650d
+
+// keep failures
+
+.create-merge table ingest_failure (data:string,source:string) with (folder = 'ingestion')
+
+.alter column ingest_failure.data policy encoding type='BigObject32'
+
+.alter table ingest_failure policy update 
+```[
+{ "IsEnabled": true, "Source": "evh_telemetry_cube", "Query": "evh_telemetry_cube| where isempty(extract_json('$.deviceId',data))|extend source='cube'", "IsTransactional": false, "PropagateIngestionProperties": false}
+,{ "IsEnabled": true, "Source": "evh_telemetry_ac", "Query": "evh_telemetry_ac| where isempty(extract_json('$.deviceId',data))|extend source='ac'", "IsTransactional": false, "PropagateIngestionProperties": false}
+// ,{ "IsEnabled": true, "Source": "evh_device_connectivity", "Query": "evh_device_connectivity|extend body=parse_json(data)|mv-apply body on (where isempty(replace_string(tostring(body.subject),'devices/',''))|summarize count())|where count_ >0|project data,source='cube'", "IsTransactional": false, "PropagateIngestionProperties": false}
+]```
+
+
+// keep ingestion volume
+
+.create-merge table ingest_volume (timestamp:datetime, deviceId:string, size:long, source:string, ['count']:long) with (folder = 'ingestion')
+
+.alter table ingest_volume policy update 
+```[
+{ "IsEnabled": true, "Source": "evh_telemetry_cube", "Query": "evh_telemetry_cube|project deviceId=extract_json('$.deviceId',data),size=estimate_data_size(*)|summarize size=sum(size),count=count() by deviceId|project timestamp=now(),deviceId,size,source='cube',['count']", "IsTransactional": false, "PropagateIngestionProperties": false}
+,{ "IsEnabled": true, "Source": "evh_telemetry_ac", "Query": "evh_telemetry_ac|project deviceId=extract_json('$.deviceId',data),size=estimate_data_size(*)|summarize size=sum(size),count=count() by deviceId|project timestamp=now(),deviceId,size,source='ac',['count']", "IsTransactional": false, "PropagateIngestionProperties": false}
+]```
+
+
+// 
+// // business-assets
+// // first time creation
+// .alter table evh_business_assets policy caching hot =3000d
+// 
+// .create ifnotexists materialized-view with (folder ='liveData',backfill=true,effectiveDateTime=datetime(2019-05-01)) contract_Live on table evh_business_assets { 
+// evh_business_assets
+// |project body=parse_json(data),timestamp=ingestion_time()
+// |project timestamp
+// ,assetHierarchyId=tostring(body.assetHierarchyId),contractId=tostring(body.contractId),contractName=tostring(body.contractName)
+// ,customer=tostring(body.customer),product=tostring(body.product),deleted=tobool(body.deleted)
+// ,region=tostring(body.address.region),latitude=toreal(body.address.latitude),longitude=toreal(body.address.longitude)
+// ,standardOffset=totimespan(body.address.timezone.standardOffset),daylightSavings=totimespan(body.address.timezone.daylightSavings),timezoneId=tostring(body.address.timezone.id),sunrise=toreal(body.address.timezone.sunrise),sunset=toreal(body.address.timezone.sunset)
+// ,assets=body.assets
+// |summarize arg_max(timestamp,*) by assetHierarchyId
+// }
+// 
+// .alter table evh_business_assets policy caching hot =1h
+// // /first time creation
+
+.create-or-alter materialized-view with (folder ='liveData') contract_Live on table evh_business_assets { 
+evh_business_assets
+|project body=parse_json(data),timestamp=ingestion_time()
+|project timestamp
+,assetHierarchyId=tostring(body.assetHierarchyId),contractId=tostring(body.contractId),contractName=tostring(body.contractName)
+,customer=tostring(body.customer),product=tostring(body.product),deleted=tobool(body.deleted)
+,region=tostring(body.address.region),latitude=toreal(body.address.latitude),longitude=toreal(body.address.longitude)
+,standardOffset=totimespan(body.address.timezone.standardOffset),daylightSavings=totimespan(body.address.timezone.daylightSavings),timezoneId=tostring(body.address.timezone.id),sunrise=toreal(body.address.timezone.sunrise),sunset=toreal(body.address.timezone.sunset)
+,assets=body.assets
+|summarize arg_max(timestamp,*) by assetHierarchyId
+}

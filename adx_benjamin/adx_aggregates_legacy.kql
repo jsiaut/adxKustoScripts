@@ -1,0 +1,180 @@
+.create-merge table legacyTelemetry_Raw (timestamp:datetime,eventType:string,deviceId:string,levelId:string,metric:string,value:double) with (folder = 'telemetry')
+
+.alter-merge table legacyTelemetry_Raw policy partitioning ```
+{
+  "PartitionKeys": [
+    {
+      "ColumnName": "deviceId",
+      "Kind": "Hash",
+      "Properties": {
+        "Function": "XxHash64",
+        "MaxPartitionCount": 128,
+        "Seed": 1,
+        "PartitionAssignmentMode": "Uniform"
+      }
+    },
+    {
+      "ColumnName": "timestamp",
+      "Kind": "UniformRange",
+      "Properties": {
+        "Reference": "2021-01-01T00:00:00",
+        "RangeSize": "1.00:00:00",
+        "OverrideCreationTime": true
+      }
+    }
+  ],
+  "EffectiveDateTime":"2024-11-10T00:00:00"
+}
+```
+
+
+// 1m
+.create-or-alter materialized-view with(folder ='aggregates/telemetry') legacyTelemetry_Aggregate1m on table legacyTelemetry_Raw
+{
+    legacyTelemetry_Raw 
+    | summarize min(value),avg(value),max(value),count() by bin(timestamp,1m),eventType,deviceId,levelId,metric
+}
+
+.alter-merge materialized-view legacyTelemetry_Aggregate1m policy partitioning ```
+{
+  "PartitionKeys": [
+    {
+      "ColumnName": "deviceId",
+      "Kind": "Hash",
+      "Properties": {
+        "Function": "XxHash64",
+        "MaxPartitionCount": 128,
+        "Seed": 1,
+        "PartitionAssignmentMode": "Uniform"
+      }
+    },
+    {
+      "ColumnName": "timestamp",
+      "Kind": "UniformRange",
+      "Properties": {
+        "Reference": "2021-01-01T00:00:00",
+        "RangeSize": "10.00:00:00",
+        "OverrideCreationTime": true
+      }
+    }
+  ],
+  "EffectiveDateTime":"2024-11-10T00:00:00"
+}
+```
+
+
+// 1h
+.create-or-alter materialized-view with(folder ='aggregates/telemetry') legacyTelemetry_Aggregate1h on table legacyTelemetry_Raw
+{
+    legacyTelemetry_Raw 
+    | summarize min(value),avg(value),max(value),count() by bin(timestamp,1h),eventType,deviceId,levelId,metric
+}
+
+.alter-merge materialized-view legacyTelemetry_Aggregate1h policy partitioning ```
+{
+  "PartitionKeys": [
+    {
+      "ColumnName": "deviceId",
+      "Kind": "Hash",
+      "Properties": {
+        "Function": "XxHash64",
+        "MaxPartitionCount": 128,
+        "Seed": 1,
+        "PartitionAssignmentMode": "Uniform"
+      }
+    },
+    {
+      "ColumnName": "timestamp",
+      "Kind": "UniformRange",
+      "Properties": {
+        "Reference": "2021-01-01T00:00:00",
+        "RangeSize": "375.00:00:00",
+        "OverrideCreationTime": true
+      }
+    }
+  ],
+  "EffectiveDateTime":"2024-11-11T00:00:00"
+}
+```
+
+
+
+// 1d
+.create-or-alter materialized-view with(folder ='aggregates/telemetry') legacyTelemetry_Aggregate1d on table legacyTelemetry_Raw
+{
+    legacyTelemetry_Raw 
+    | summarize min(value),avg(value),max(value),count() by bin(timestamp,1d),eventType,deviceId,levelId,metric
+}
+
+.alter-merge materialized-view legacyTelemetry_Aggregate1d policy partitioning ```
+{
+  "PartitionKeys": [
+    {
+      "ColumnName": "deviceId",
+      "Kind": "Hash",
+      "Properties": {
+        "Function": "XxHash64",
+        "MaxPartitionCount": 128,
+        "Seed": 1,
+        "PartitionAssignmentMode": "Uniform"
+      }
+    }
+  ],
+  "EffectiveDateTime":"2021-01-01T00:00:00"
+}
+```
+
+
+// Availability
+.create-or-alter materialized-view with (folder ='aggregates/telemetry') legacyTelemetry_Availability on table legacyTelemetry_Raw { 
+    legacyTelemetry_Raw
+    | summarize Availability = count() by bin(timestamp,1d)
+}
+
+
+// allAggregates 
+.create-or-alter function with (folder = 'aggregates') legacyTelemetry_Aggregate(bucket:timespan){
+union 
+    (legacyTelemetry_Aggregate1d|where bucket==1d)
+    ,(legacyTelemetry_Aggregate1h|where bucket==1h or bucket==6h)
+    ,(legacyTelemetry_Aggregate1m|where bucket==1m or bucket==10m)
+    ,(legacyTelemetry_Raw|where bucket==1s|project timestamp,eventType,deviceId,levelId,metric,min_value=value,avg_value=value,max_value=value,count_=1)
+}
+//ok
+
+.create-or-alter function with (folder = 'Trender') all_telemetry_Raw(){
+union
+    (deviceTelemetry|project timestamp,eventType,deviceId,levelId,metric,value)
+    ,(legacyTelemetry_Raw|project timestamp,eventType,deviceId,levelId,metric,value)
+}
+//ok
+
+.create-or-alter function with (folder = 'Trender') all_telemetry_Aggregates(bucket:timespan){
+union
+    deviceTelemetry_Aggregates(bucket)
+    ,legacyTelemetry_Aggregate(bucket)
+}
+//ok
+
+.create-or-alter function with (folder = 'Trender', docstring = "Get Total Availability") GetTotalAvailability() {
+union 
+    deviceTelemetry_TotalAvailability,
+    legacyTelemetry_Availability,
+    (print timestamp=now(),Availability=0)
+| summarize sum(Availability) by timestamp
+|where timestamp >= datetime(2022-01-01)
+} 
+//ok
+
+.alter table legacyTelemetry_Raw policy caching hot =3d
+
+.alter materialized-view legacyTelemetry_Aggregate1m policy caching hot =500h
+
+.alter materialized-view legacyTelemetry_Aggregate1h policy caching hot =500d
+
+.alter materialized-view legacyTelemetry_Aggregate1d policy caching hot =3500d
+
+.alter materialized-view legacyTelemetry_Availability policy caching hot =3500d
+
+
+

@@ -1,0 +1,112 @@
+.alter-merge database ['isight-data'] policy merge ```
+{
+  "MaxRangeInHours": 168,
+  "AllowRebuild": true,
+  "AllowMerge": true,
+  "Lookback": {
+    "Kind": "All"
+  }
+}```
+
+
+.alter-merge table deviceTelemetry policy partitioning ```
+{
+  "PartitionKeys": [
+    {
+      "ColumnName": "deviceId",
+      "Kind": "Hash",
+      "Properties": {
+        "Function": "XxHash64",
+        "MaxPartitionCount": 128,
+        "Seed": 1,
+        "PartitionAssignmentMode": "Uniform"
+      }
+    },
+    {
+      "ColumnName": "timestamp",
+      "Kind": "UniformRange",
+      "Properties": {
+        "Reference": "2021-01-01T00:00:00",
+        "RangeSize": "1.00:00:00",
+        "OverrideCreationTime": true
+      }
+    }
+  ],
+  "EffectiveDateTime": "2020-01-01"
+}
+```
+
+
+.alter-merge materialized-view deviceTelemetry_Aggregate1m policy partitioning ```
+{
+  "PartitionKeys": [
+    {
+      "ColumnName": "deviceId",
+      "Kind": "Hash",
+      "Properties": {
+        "Function": "XxHash64",
+        "MaxPartitionCount": 128,
+        "Seed": 1,
+        "PartitionAssignmentMode": "Uniform"
+      }
+    },
+    {
+      "ColumnName": "timestamp",
+      "Kind": "UniformRange",
+      "Properties": {
+        "Reference": "2021-01-01T00:00:00",
+        "RangeSize": "10.00:00:00",
+        "OverrideCreationTime": true
+      }
+    }
+  ],
+  "EffectiveDateTime": "2020-01-01"
+}
+```
+
+
+.alter-merge materialized-view deviceTelemetry_Aggregate1h policy partitioning ```
+{
+  "PartitionKeys": [
+    {
+      "ColumnName": "deviceId",
+      "Kind": "Hash",
+      "Properties": {
+        "Function": "XxHash64",
+        "MaxPartitionCount": 128,
+        "Seed": 1,
+        "PartitionAssignmentMode": "Uniform"
+      }
+    },
+    {
+      "ColumnName": "timestamp",
+      "Kind": "UniformRange",
+      "Properties": {
+        "Reference": "2021-01-01T00:00:00",
+        "RangeSize": "375.00:00:00",
+        "OverrideCreationTime": true
+      }
+    }
+  ],
+  "EffectiveDateTime": "2020-01-01"
+}
+```
+
+
+.alter-merge materialized-view deviceTelemetry_Aggregate1d policy partitioning ```
+{
+  "PartitionKeys": [
+    {
+      "ColumnName": "deviceId",
+      "Kind": "Hash",
+      "Properties": {
+        "Function": "XxHash64",
+        "MaxPartitionCount": 128,
+        "Seed": 1,
+        "PartitionAssignmentMode": "Uniform"
+      }
+    }
+  ],
+  "EffectiveDateTime": "2020-01-01"
+}
+```
