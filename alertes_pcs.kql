@@ -154,11 +154,3 @@ HashedEvents
     | where deviceId != prev(deviceId) or levelId != prev(levelId) or value != prev(value)
 )
 | project-away bucket
-
-
-
-.show table deviceTelemetry policy roworder
-
-.alter table deviceTelemetry policy roworder (levelId asc, metric asc)
-
-deviceTelemetry | take 100

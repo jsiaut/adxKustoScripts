@@ -1,0 +1,45 @@
+//Investiguer les requêtes (RAM, CPU)
+.show commands-and-queries
+| where CommandType == "Query" and User != "KustoServiceBuiltInPrincipal"
+| project ClientActivityId, CommandType, Text, StartedOn, Duration, User, Application, TotalCpu, MemoryPeak
+| where TotalCpu >= 3m
+| order by StartedOn desc
+//| summarize count() by Text
+
+//All failed events
+.show commands-and-queries
+| where State == "Failed"
+
+
+//Voir les erreurs d'ingestion
+.show ingestion failures
+| project Table, FailedOn, Details
+
+
+//Voir les 100 derniers évènements
+.show database ["isight-data"] journal
+| top 100 by EventTimestamp
+
+
+//Voir les failures d'une vue materialisée
+.show materialized-view deviceTelemetry_Aggregate1m failures
+
+
+//Checker les volumes d'ingestion journalier par cube
+ingest_volume | where timestamp >= ago(5d) | sort by count
+
+
+//Voir les recommandations
+.show diagnostics
+| project IsHealthy, NotHealthyReason, IsAttentionRequired, AttentionRequiredReason, IsScaleOutRequired
+
+
+//Voir les détails d'une vue materialisée
+.show materialized-view deviceTelemetry_Aggregate1m details
+
+//MV cache policy
+.show materialized-view deviceTelemetry_Aggregate1m policy caching
+
+
+//Voir toutes les opérations
+.show operations | where StartedOn >= ago(2d) and State == "InProgress" and Operation == "TableSetOrAppend" | top 20 by StartedOn

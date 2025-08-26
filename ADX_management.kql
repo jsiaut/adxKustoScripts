@@ -1,0 +1,60 @@
+//Investiguer les requêtes (RAM, CPU)
+.show commands-and-queries
+| where CommandType == "Query" and User != "KustoServiceBuiltInPrincipal"
+| project ClientActivityId, CommandType, Text, StartedOn, Duration, User, Application, TotalCpu, MemoryPeak
+| where TotalCpu >= 3m
+| order by StartedOn desc
+//| summarize count() by Text
+
+
+//Supprimer des lignes dans une petite table
+.delete table evh_business_references records with (whatif=true) <|
+evh_business_references | where not(data has_cs "1754642697")
+
+.delete table evh_business_references records <|
+evh_business_references | where not(data has_cs "1754642697")
+
+
+//Voir les limitations des vues materialisées
+.show workload_group ['$materialized-views']
+
+//A rajouter dans scripts ?
+//Value default 16106127360
+.alter-merge workload_group ['$materialized-views'] ```
+{
+    "RequestLimitsPolicy": {
+        "MaxMemoryPerQueryPerNode": {
+            "Value": 34359150592
+        }
+    }
+} ```
+
+
+//Optimiser avec le Row Ordering
+.show table deviceTelemetry policy roworder
+
+.alter table deviceTelemetry policy roworder (levelId asc, metric asc)
+
+
+//Voir les limitations du cluster
+.show cluster policy capacity
+
+
+//Voir les workload groups
+.show workload_groups
+
+
+//Changer la capacité du nombre de vues materialisées du cluster
+.show capacity 
+
+.alter-merge cluster policy capacity
+```{
+"MaterializedViewsCapacity": {
+"ClusterMinimumConcurrentOperations": 1,
+"ClusterMaximumConcurrentOperations": 12
+}
+}```
+
+
+//Détails du cluster
+.show cluster 
