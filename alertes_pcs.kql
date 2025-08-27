@@ -80,7 +80,14 @@ deviceTelemetry_Live
 | lookup kind=leftouter faultId_mapping on pcsSupplier, $left.pcsGeneration == $right.generation, $left.Fault_Id == $right.code
 | project contractName, deviceId, levelId, timestamp, pcsSupplier, pcsGeneration, InvState, InvStateLabel=label, Fault_Id, Fault_IdLabel=label1
 | extend Fault_Id = iff(pcsSupplier == "Power Electronics", GetLastBinaryOctet(Fault_Id), Fault_Id)
-| order by contractName asc, deviceId asc, levelId asc
+| extend parts = split(substring(levelId, 4), ".")
+| extend
+    part1 = toint(parts[0]),
+    part2 = toint(parts[1]),
+    part3 = toint(parts[2])
+| sort by part1 asc, part2 asc, part3 asc
+| order by contractName asc, part1 asc, part2 asc, part3 asc
+| project-away parts, part1, part2, part3
  
 
  

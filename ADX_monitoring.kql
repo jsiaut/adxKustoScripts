@@ -21,12 +21,12 @@
 | top 100 by EventTimestamp
 
 
-//Voir les failures d'une vue materialisée
-.show materialized-view deviceTelemetry_Aggregate1m failures
-
-
 //Checker les volumes d'ingestion journalier par cube
-ingest_volume | where timestamp >= ago(5d) | sort by count
+ingest_volume
+| where timestamp >= ago(7d)
+| lookup kind=leftouter (GetAssets | project deviceId = technicalId, contractName) on deviceId
+| top 100 by size
+| distinct *
 
 
 //Voir les recommandations
@@ -39,6 +39,9 @@ ingest_volume | where timestamp >= ago(5d) | sort by count
 
 //MV cache policy
 .show materialized-view deviceTelemetry_Aggregate1m policy caching
+
+//Voir les failures d'une vue materialisée
+.show materialized-view deviceTelemetry_Aggregate1m failures
 
 
 //Voir toutes les opérations
