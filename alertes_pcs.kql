@@ -53,51 +53,32 @@ evh_business_references
 
 GetPCSFaultsMapping()
 
-
-//AC alerts
-let asset_mapping = asset()
-    | where assetType == "PCS" and isnotempty(technicalId)
-    | project contractName, deviceId=technicalId, pcsSupplier, pcsGeneration
-    | distinct *;
-let fault_mappings_raw = materialize(GetPCSFaultsMapping());
-let invSt_mapping = fault_mappings_raw | where name == "invSt";
-let faultId_mapping = fault_mappings_raw | where name == "faultId";
-let GetLastBinaryOctet = (inputId:int) {
-    let original_string = format_ipv4(inputId, 32);
-    let octets = split(original_string, ".");
-    toint(octets[array_length(octets) - 1])
-};
-deviceTelemetry_Live
-| where timestamp >= datetime(2025-08-01)
-| where metric in ("InvSt", "Fault_Id")
-| summarize
-    timestamp = max(timestamp),
-    InvState  = toint(take_anyif(value, metric == "InvSt")),
-    Fault_Id  = toint(take_anyif(value, metric == "Fault_Id"))
-    by deviceId, levelId
-| lookup kind=leftouter asset_mapping on deviceId
-| lookup kind=leftouter invSt_mapping  on pcsSupplier, $left.pcsGeneration == $right.generation, $left.InvState == $right.code
-| lookup kind=leftouter faultId_mapping on pcsSupplier, $left.pcsGeneration == $right.generation, $left.Fault_Id == $right.code
-| project contractName, deviceId, levelId, timestamp, pcsSupplier, pcsGeneration, InvState, InvStateLabel=label, Fault_Id, Fault_IdLabel=label1
-| extend Fault_Id = iff(pcsSupplier == "Power Electronics", GetLastBinaryOctet(Fault_Id), Fault_Id)
-| extend parts = split(substring(levelId, 4), ".")
-| extend
-    part1 = toint(parts[0]),
-    part2 = toint(parts[1]),
-    part3 = toint(parts[2])
-| sort by part1 asc, part2 asc, part3 asc
-| order by contractName asc, part1 asc, part2 asc, part3 asc
-| project-away parts, part1, part2, part3
+////////////////////////////Create PCS Alerts table//////////////////////////////////////////////
  
+ //Méthodes passage de la donnée on event pour ensuite pouvoir gérer l'alignement
+let num_buckets = 1000;
+let HashedEvents = deviceTelemetry
+| where timestamp >= ago(1d)
+| where metric == "Fault_Id" and not(levelId has_cs "PQM") and isnotempty(value)
+| project timestamp, deviceId, levelId, metric, value
+| extend bucket = hash(strcat(deviceId, levelId), num_buckets)
+;
+HashedEvents
+| partition hint.strategy=shuffle by bucket (
+    sort by deviceId asc, levelId asc, timestamp asc
+    | where deviceId != prev(deviceId) or levelId != prev(levelId) or value != prev(value)
+)
+| project-away bucket
+| order by deviceId asc, levelId asc, timestamp asc
 
- 
- //Alignement InvState et Fault_Id
+
+//Alignement InvState et Fault_Id
 let asset_mapping = asset()
     | where assetType == "PCS" and isnotempty(technicalId)
     | project contractName, deviceId=technicalId, pcsSupplier, pcsGeneration
     | distinct *;
 let _data = deviceTelemetry
-    | where timestamp >= ago(7d)
+    | where timestamp >= ago(1d)
     | where metric in ("InvSt", "Fault_Id")
     | where not(levelId has_cs "PQM")
     | where isnotempty(value)
@@ -122,42 +103,40 @@ _data
 | where not(isempty(Fault_Id))
 | lookup kind=leftouter asset_mapping on deviceId
 | order by contractName asc, deviceId asc, levelId asc, timestamp asc
- 
- //Méthodes passage de la donnée on event pour ensuite pouvoir gérer l'alignement
-deviceTelemetry
-| where timestamp >= ago(5d)
-| where metric == "Fault_Id"
-| where not(levelId has_cs "PQM")
-| where isnotempty(value)
-| order by deviceId asc, levelId asc, timestamp asc
-| where deviceId != prev(deviceId) or levelId != prev(levelId) or value != prev(value)
- 
-let PartialEvents = deviceTelemetry
-| where timestamp >= ago(5d)
-| where metric == "Fault_Id" and not(levelId has_cs "PQM") and isnotempty(value) // ou InvSt
-| project timestamp, deviceId, levelId, metric, value
-| extend partitionKey = strcat(deviceId, " | ", levelId, " | ", tostring(bin(timestamp, 1d)))
-| partition hint.strategy=shuffle by partitionKey (
-    sort by timestamp asc
-    | where value != prev(value)
-);
-PartialEvents
-| project-away partitionKey
-| order by deviceId asc, levelId asc, timestamp asc
-| where deviceId != prev(deviceId) or levelId != prev(levelId) or value != prev(value)
- 
- 
- 
-let num_buckets = 1000;
-let HashedEvents = deviceTelemetry
-| where timestamp >= ago(5d)
-| where metric == "Fault_Id" and not(levelId has_cs "PQM") and isnotempty(value)
-| project timestamp, deviceId, levelId, value
-| extend bucket = hash(strcat(deviceId, levelId), num_buckets)
-;
-HashedEvents
-| partition hint.strategy=shuffle by bucket (
-    sort by deviceId asc, levelId asc, timestamp asc
-    | where deviceId != prev(deviceId) or levelId != prev(levelId) or value != prev(value)
-)
-| project-away bucket
+
+
+//AC alerts business logic
+let asset_mapping = asset()
+    | where assetType == "PCS" and isnotempty(technicalId)
+    | project contractName, deviceId=technicalId, pcsSupplier, pcsGeneration, assetType, assetLevel, siteLabel
+    | distinct *;
+let fault_mappings_raw = materialize(GetPCSFaultsMapping());
+let invSt_mapping = fault_mappings_raw | where name == "invSt";
+let faultId_mapping = fault_mappings_raw | where name == "faultId";
+let GetLastBinaryOctet = (inputId:int) {
+    let original_string = format_ipv4(inputId, 32);
+    let octets = split(original_string, ".");
+    toint(octets[array_length(octets) - 1])
+};
+deviceTelemetry_Live
+| where timestamp >= datetime(2025-08-01)
+| where metric in ("InvSt", "Fault_Id")
+| summarize
+    timestamp = max(timestamp),
+    InvState  = toint(take_anyif(value, metric == "InvSt")),
+    Fault_Id  = toint(take_anyif(value, metric == "Fault_Id"))
+    by deviceId, levelId
+| lookup kind=leftouter asset_mapping on deviceId
+| lookup kind=leftouter invSt_mapping  on pcsSupplier, $left.pcsGeneration == $right.generation, $left.InvState == $right.code
+| lookup kind=leftouter faultId_mapping on pcsSupplier, $left.pcsGeneration == $right.generation, $left.Fault_Id == $right.code
+| project contractName, deviceId, levelId, timestamp, pcsSupplier, pcsGeneration, InvState, InvStateLabel=label, Fault_Id, Fault_IdLabel=label1, assetType, assetLevel, siteLabel
+| extend Fault_Id = iff(pcsSupplier == "Power Electronics", GetLastBinaryOctet(Fault_Id), Fault_Id)
+| extend parts = split(substring(levelId, 4), ".")
+| extend
+    part1 = toint(parts[0]),
+    part2 = toint(parts[1]),
+    part3 = toint(parts[2])
+| order by contractName asc, part1 asc, part2 asc, part3 asc
+| project-away parts, part1, part2, part3
+//| where InvState in (9, 17, 1392)
+//| project contractName, Event_start = timestamp, Alarm_Name = Fault_IdLabel, Asset_type = assetType, Asset_ID = assetLevel, Site_label = siteLabel
