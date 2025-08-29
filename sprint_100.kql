@@ -1,0 +1,49 @@
+.create-or-alter function with (folder = "Trender", docstring = "search metrics", skipvalidation = "true") SearchTelemetry(predicateText:string, scopeSite:string, scopeDevice:string, scopeEventType:string) {
+let predicateArray=split(predicateText,' ');
+let data = deviceTelemetry_Live
+| lookup GetSiteDevices on deviceId
+| project site, metric, eventType, deviceId, deviceLabel, levelIdPrefix = substring(levelId, 0, 2), levelId
+| lookup GetAssets on $left.deviceId == $right.technicalId and $left.levelIdPrefix == $right.levelIdPrefix
+| project-reorder site
+| project site, contractId, deviceId, deviceLabel, levelId, metric, eventType, siteLabel
+| where (scopeSite=='' or scopeSite==site) and (scopeDevice=='' or scopeDevice==deviceId) and (scopeEventType=='' or scopeEventType==eventType);
+data | extend all_string = strcat_array(pack_array(*), ',')
+| mv-apply predicate = predicateArray to typeof(string) on (where all_string contains predicate)
+| summarize count() by site, contractId, deviceId, deviceLabel, levelId, metric, eventType, siteLabel
+| where count_ == array_length(predicateArray)
+| project-away count_
+} 
+
+
+let predicateText = "StrSoC Antugnac";
+let terms = split(predicateText, " ");
+let Assets = GetAssets | project assetId, assetType, assetLevel, levelId, deviceId=technicalId;
+deviceTelemetry_Live
+| project-away timestamp, value
+| lookup kind=leftouter GetSiteDevices on deviceId
+| lookup kind=leftouter Assets on deviceId, levelId
+| extend searchable_text = tostring(pack_all())
+| where searchable_text has_all (terms)
+| project-away searchable_text
+
+SearchTelemetry("SoC", "Antugnac", "cube-068b32", "metric")
+
+SearchTelemetry("StrSoC Antugnac", "", "", "")
+
+
+GetSiteDevices
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+.create-or-alter external table AggWindowedContractAvgbleMetrics kind=delta
+    (h@'abfss://ds-gold-results@strdbwdataessprod.dfs.core.windows.net/AggWindowedContractAvgbleMetrics;managed_identity=system')
+    
+external_table("AggWindowedContractAvgbleMetrics")
+| take 100
+
+external_table("AggWindowedContractSummableMetrics")
+| where duration_s == 2
+| lookup kind=inner (GetDeviceContracts | distinct contractId, contractName) on contractId
+| where contractName == "Antugnac"
+| project metric_type, type, name, timestamp, contractName
+| take 100
